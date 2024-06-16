@@ -62,6 +62,7 @@ void printf(const char *fmt, ...) {
         putchar(*s);
         s++;
       }
+      break;
     }
     case 'd': {
       int value = va_arg(vargs, int);
@@ -87,6 +88,7 @@ void printf(const char *fmt, ...) {
         int nibble = (value >> (i * 4)) & 0xf;
         putchar("0123456789abcdef"[nibble]);
       }
+      break;
     }
     }
     fmt++;
