@@ -45,7 +45,8 @@ struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,
 void putchar(char ch) { sbi_call(ch, 0, 0, 0, 0, 0, 0, 1); }
 
 __attribute__((naked)) __attribute__((aligned(4))) void kernel_entrty(void) {
-  __asm__ __volatile__("csrw sscratch ,sp\n"
+  __asm__ __volatile__("csrrw sp, sscratch, sp\n"
+
                        "addi sp, sp, -4*31\n"
                        "sw ra, 4*0(sp)\n"
                        "sw gp, 4*1(sp)\n"
@@ -114,6 +115,8 @@ __attribute__((naked)) __attribute__((aligned(4))) void kernel_entrty(void) {
                        "lw s10, 4*28(sp)\n"
                        "lw s11, 4*29(sp)\n"
                        "lw sp, 4*30(sp)\n"
+                       "addi a0, sp, 4 * 31\n"
+                       "csrw sscratch, a0\n"
                        "sret\n");
 }
 
@@ -154,6 +157,31 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
                        "lw s11, 4*12(sp)\n"
                        "addi sp, sp, +13*4\n"
                        "ret\n");
+}
+
+struct process *current_proc;
+struct process *idle_proc;
+
+void yield(void) {
+  struct process *next = idle_proc;
+  for (int i = 0; i < PROCS_MAX; i++) {
+    struct process *proc = &procs[(current_proc->pid + i) % PROCS_MAX];
+    if (proc->state == PROC_RUNNABLE && proc->pid > 0) {
+      next = proc;
+      break;
+    }
+  }
+  if (next == current_proc)
+    return;
+
+  __asm__ __volatile__(
+      "csrw sscratch, %[sscratch]\n"
+      :
+      : [sscratch] "r"((uint32_t)&next->stack[sizeof(next->stack)]));
+
+  struct process *prev = current_proc;
+  current_proc = next;
+  switch_context(&prev->sp, &next->sp);
 }
 
 struct process *create_process(uint32_t pc) {
@@ -206,7 +234,7 @@ void proc_a_entry(void) {
   printf("starting process A\n");
   while (1) {
     putchar('A');
-    switch_context(&proc_a->sp, &proc_b->sp);
+    yield();
 
     for (int i = 0; i < 30000000; i++) {
       __asm__ __volatile__("nop");
@@ -218,11 +246,12 @@ void proc_b_entry(void) {
   printf("starting process B\n");
   while (1) {
     putchar('B');
-    switch_context(&proc_b->sp, &proc_a->sp);
+    yield();
 
     for (int i = 0; i < 30000000; i++) {
       __asm__ __volatile__("nop");
     }
+    // __asm__ __volatile__("unimp"); // 無効な命令
   }
 }
 
@@ -237,16 +266,16 @@ void kernel_main(void) {
   // printf("alloc_pages test: paddr0=%x\n", paddr0);
   // printf("alloc_pages test: paddr1=%x\n", paddr1);
 
+  idle_proc = create_process((uint32_t)NULL);
+  idle_proc->pid = -1;
+  current_proc = idle_proc;
+
   proc_a = create_process((uint32_t)proc_a_entry);
   proc_b = create_process((uint32_t)proc_b_entry);
-  proc_a_entry();
+  yield();
 
   PANIC("unreachable here!");
-  printf("unreachable here!\n");
-
-  for (;;) {
-    __asm__ __volatile__("wfi");
-  }
+  // __asm__ __volatile__("wfi");
 }
 
 __attribute__((section(".text.boot")))
