@@ -117,6 +117,79 @@ __attribute__((naked)) __attribute__((aligned(4))) void kernel_entrty(void) {
                        "sret\n");
 }
 
+struct process procs[PROCS_MAX];
+
+__attribute__((naked)) void switch_context(uint32_t *prev_sp,
+                                           uint32_t *next_sp) {
+  __asm__ __volatile__("addi sp, sp, -13 * 4\n"
+                       "sw ra, 4*0(sp)\n"
+                       "sw s0, 4*1(sp)\n"
+                       "sw s1, 4*2(sp)\n"
+                       "sw s2, 4*3(sp)\n"
+                       "sw s3, 4*4(sp)\n"
+                       "sw s4, 4*5(sp)\n"
+                       "sw s5, 4*6(sp)\n"
+                       "sw s6, 4*7(sp)\n"
+                       "sw s7, 4*8(sp)\n"
+                       "sw s8, 4*9(sp)\n"
+                       "sw s9, 4*10(sp)\n"
+                       "sw s10, 4*11(sp)\n"
+                       "sw s11, 4*12(sp)\n"
+
+                       "sw sp, (a0)\n"
+                       "lw sp, (a1)\n"
+
+                       "lw ra, 4*0(sp)\n"
+                       "lw s0, 4*1(sp)\n"
+                       "lw s1, 4*2(sp)\n"
+                       "lw s2, 4*3(sp)\n"
+                       "lw s3, 4*4(sp)\n"
+                       "lw s4, 4*5(sp)\n"
+                       "lw s5, 4*6(sp)\n"
+                       "lw s6, 4*7(sp)\n"
+                       "lw s7, 4*8(sp)\n"
+                       "lw s8, 4*9(sp)\n"
+                       "lw s9, 4*10(sp)\n"
+                       "lw s10, 4*11(sp)\n"
+                       "lw s11, 4*12(sp)\n"
+                       "addi sp, sp, +13*4\n"
+                       "ret\n");
+}
+
+struct process *create_process(uint32_t pc) {
+  struct process *proc = NULL;
+  int i;
+  for (i = 0; i < PROCS_MAX; i++) {
+    if (procs[i].state == PROC_UNUSED) {
+      proc = &procs[i];
+      break;
+    }
+  }
+  if (!proc)
+    PANIC("no free process slots");
+
+  uint32_t *sp = (uint32_t *)&proc->stack[sizeof(proc->stack)];
+  *--sp = 0; // s11
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;
+  *--sp = 0;            // s0
+  *--sp = (uint32_t)pc; // ra
+
+  proc->pid = i + 1;
+  proc->state = PROC_RUNNABLE;
+  proc->sp = (uint32_t)sp;
+
+  return proc;
+}
+
 void handle_trap(struct trap_frame *f) {
   uint32_t scause = READ_CSR(scause);
   uint32_t stval = READ_CSR(stval);
@@ -126,21 +199,49 @@ void handle_trap(struct trap_frame *f) {
         user_pc);
 }
 
+struct process *proc_a;
+struct process *proc_b;
+
+void proc_a_entry(void) {
+  printf("starting process A\n");
+  while (1) {
+    putchar('A');
+    switch_context(&proc_a->sp, &proc_b->sp);
+
+    for (int i = 0; i < 30000000; i++) {
+      __asm__ __volatile__("nop");
+    }
+  }
+}
+
+void proc_b_entry(void) {
+  printf("starting process B\n");
+  while (1) {
+    putchar('B');
+    switch_context(&proc_b->sp, &proc_a->sp);
+
+    for (int i = 0; i < 30000000; i++) {
+      __asm__ __volatile__("nop");
+    }
+  }
+}
+
 void kernel_main(void) {
   memset(__bss, 0, (size_t)__bss_end - (size_t)__bss);
-
   printf("\n\nHello %s\n", "World!");
-  printf("1 + 2 = %d, %x\n", 1 + 2, 0x1234abcd);
-
   WRITE_CSR(stvec, (uint32_t)kernel_entrty);
   // __asm__ __volatile__("unimp"); // 無効な命令
   //
-  paddr_t paddr0 = alloc_pages(2);
-  paddr_t paddr1 = alloc_pages(1);
-  printf("alloc_pages test: paddr0=%x\n", paddr0);
-  printf("alloc_pages test: paddr1=%x\n", paddr1);
+  // paddr_t paddr0 = alloc_pages(2);
+  // paddr_t paddr1 = alloc_pages(1);
+  // printf("alloc_pages test: paddr0=%x\n", paddr0);
+  // printf("alloc_pages test: paddr1=%x\n", paddr1);
 
-  PANIC("booted!");
+  proc_a = create_process((uint32_t)proc_a_entry);
+  proc_b = create_process((uint32_t)proc_b_entry);
+  proc_a_entry();
+
+  PANIC("unreachable here!");
   printf("unreachable here!\n");
 
   for (;;) {
