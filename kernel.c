@@ -195,6 +195,9 @@ void yield(void) {
   if (next == current_proc)
     return;
 
+  struct process *prev = current_proc;
+  current_proc = next;
+
   __asm__ __volatile__(
       "sfence.vma\n"
       "csrw satp, %[satp]\n"
@@ -203,9 +206,6 @@ void yield(void) {
       :
       : [satp] "r"(SATP_SV32 | ((uint32_t)next->page_table / PAGE_SIZE)),
         [sscratch] "r"((uint32_t)&next->stack[sizeof(next->stack)]));
-
-  struct process *prev = current_proc;
-  current_proc = next;
 
   switch_context(&prev->sp, &next->sp);
 }
@@ -268,13 +268,29 @@ struct process *create_process(const void *image, uint32_t image_size) {
   return proc;
 }
 
+void handle_syscall(struct trap_frame *f) {
+  switch (f->a3) {
+  case SYS_PUTCHAR:
+    putchar(f->a0);
+    break;
+  default:
+    PANIC("unexpected syscall a3=%x\n", f->a3);
+  }
+}
+
 void handle_trap(struct trap_frame *f) {
   uint32_t scause = READ_CSR(scause);
   uint32_t stval = READ_CSR(stval);
   uint32_t user_pc = READ_CSR(sepc);
 
-  PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval,
-        user_pc);
+  if (scause == SCAUSE_ECALL) {
+    handle_syscall(f);
+    user_pc += 4;
+  } else {
+    PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval,
+          user_pc);
+  }
+  WRITE_CSR(sepc, user_pc);
 }
 
 struct process *proc_a;
@@ -307,7 +323,7 @@ void proc_b_entry(void) {
 
 void kernel_main(void) {
   memset(__bss, 0, (size_t)__bss_end - (size_t)__bss);
-  printf("\n\nHello %s\n", "World!");
+  printf("\n\nHello %s in kernel\n", "World!");
   WRITE_CSR(stvec, (uint32_t)kernel_entrty);
   // __asm__ __volatile__("unimp"); // 無効な命令
   //
