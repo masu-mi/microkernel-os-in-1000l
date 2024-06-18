@@ -66,7 +66,6 @@ void putchar(char ch) { sbi_call(ch, 0, 0, 0, 0, 0, 0, 1); }
 
 __attribute__((naked)) __attribute__((aligned(4))) void kernel_entrty(void) {
   __asm__ __volatile__("csrrw sp, sscratch, sp\n"
-
                        "addi sp, sp, -4*31\n"
                        "sw ra, 4*0(sp)\n"
                        "sw gp, 4*1(sp)\n"
@@ -101,6 +100,10 @@ __attribute__((naked)) __attribute__((aligned(4))) void kernel_entrty(void) {
 
                        "csrr a0, sscratch\n"
                        "sw a0, 4*30(sp)\n"
+
+                       "addi a0, sp, 4 * 31\n"
+                       "csrw sscratch, a0\n"
+
                        "mv a0, sp\n"
                        "call handle_trap\n"
 
@@ -135,8 +138,6 @@ __attribute__((naked)) __attribute__((aligned(4))) void kernel_entrty(void) {
                        "lw s10, 4*28(sp)\n"
                        "lw s11, 4*29(sp)\n"
                        "lw sp, 4*30(sp)\n"
-                       "addi a0, sp, 4 * 31\n"
-                       "csrw sscratch, a0\n"
                        "sret\n");
 }
 
