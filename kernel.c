@@ -9,6 +9,8 @@ extern char __bss[], __bss_end[], __stack_top[];
 
 extern char __free_ram[], __free_ram_end[];
 
+extern char _binary_shell_bin_start[], _binary_shell_bin_size[];
+
 paddr_t alloc_pages(uint32_t n) {
   static paddr_t next_paddr = (paddr_t)__free_ram;
 
@@ -209,7 +211,15 @@ void yield(void) {
 
 extern char __kernel_base[];
 
-struct process *create_process(uint32_t pc) {
+__attribute__((naked)) void user_entry(void) {
+  __asm__ __volatile__("csrw sepc, %[sepc]\n"
+                       "csrw sstatus, %[sstatus]\n"
+                       "sret\n"
+                       :
+                       : [sepc] "r"(USER_BASE), [sstatus] "r"(SSTATUS_SPIE));
+}
+
+struct process *create_process(const void *image, uint32_t image_size) {
   struct process *proc = NULL;
   int i;
   for (i = 0; i < PROCS_MAX; i++) {
@@ -233,14 +243,22 @@ struct process *create_process(uint32_t pc) {
   *--sp = 0;
   *--sp = 0;
   *--sp = 0;
-  *--sp = 0;            // s0
-  *--sp = (uint32_t)pc; // ra
+  *--sp = 0;                    // s0
+  *--sp = (uint32_t)user_entry; // ra
 
   uint32_t *page_table = (uint32_t *)alloc_pages(1);
   for (paddr_t paddr = (paddr_t)__kernel_base; paddr < (paddr_t)__free_ram_end;
        paddr += PAGE_SIZE) {
     map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
   }
+
+  for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
+    paddr_t page = alloc_pages(1);
+    memcpy((void *)page, image + off, PAGE_SIZE);
+    map_page(page_table, USER_BASE + off, page,
+             PAGE_U | PAGE_R | PAGE_W | PAGE_X);
+  }
+
   proc->pid = i + 1;
   proc->state = PROC_RUNNABLE;
   proc->sp = (uint32_t)sp;
@@ -297,12 +315,13 @@ void kernel_main(void) {
   // printf("alloc_pages test: paddr0=%x\n", paddr0);
   // printf("alloc_pages test: paddr1=%x\n", paddr1);
 
-  idle_proc = create_process((uint32_t)NULL);
+  idle_proc = create_process(NULL, 0);
   idle_proc->pid = -1;
   current_proc = idle_proc;
 
-  proc_a = create_process((uint32_t)proc_a_entry);
-  proc_b = create_process((uint32_t)proc_b_entry);
+  create_process(_binary_shell_bin_start, (size_t)_binary_shell_bin_size);
+  // proc_a = create_process((uint32_t)proc_a_entry);
+  // proc_b = create_process((uint32_t)proc_b_entry);
   yield();
 
   PANIC("unreachable here!");
