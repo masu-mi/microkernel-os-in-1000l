@@ -64,6 +64,11 @@ struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,
 
 void putchar(char ch) { sbi_call(ch, 0, 0, 0, 0, 0, 0, 1); }
 
+long getchar(void) {
+  struct sbiret ret = sbi_call(0, 0, 0, 0, 0, 0, 0, 2);
+  return ret.error;
+}
+
 __attribute__((naked)) __attribute__((aligned(4))) void kernel_entrty(void) {
   __asm__ __volatile__("csrrw sp, sscratch, sp\n"
                        "addi sp, sp, -4*31\n"
@@ -187,13 +192,14 @@ void yield(void) {
   struct process *next = idle_proc;
   for (int i = 0; i < PROCS_MAX; i++) {
     struct process *proc = &procs[(current_proc->pid + i) % PROCS_MAX];
-    if (proc->state == PROC_RUNNABLE && proc->pid > 0) {
+    if (proc->state == PROC_RUNNABLE && (proc->pid > 0)) {
       next = proc;
       break;
     }
   }
-  if (next == current_proc)
+  if (next == current_proc) {
     return;
+  }
 
   struct process *prev = current_proc;
   current_proc = next;
@@ -273,6 +279,22 @@ void handle_syscall(struct trap_frame *f) {
   case SYS_PUTCHAR:
     putchar(f->a0);
     break;
+  case SYS_GETCHAR:
+    while (1) {
+      long ch = getchar();
+      if (ch >= 0) {
+        f->a0 = ch;
+        break;
+      }
+      yield();
+    }
+    break;
+  case SYS_EXIT:
+    printf("process %d exited\n", current_proc->pid);
+    current_proc->state = PROC_EXITED;
+    yield();
+    PANIC("unreachable");
+    break;
   default:
     PANIC("unexpected syscall a3=%x\n", f->a3);
   }
@@ -341,7 +363,7 @@ void kernel_main(void) {
   // proc_b = create_process((uint32_t)proc_b_entry);
   yield();
 
-  PANIC("unreachable here!");
+  PANIC("switch to idle process");
   // __asm__ __volatile__("wfi");
 }
 
